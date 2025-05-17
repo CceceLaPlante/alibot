@@ -6,50 +6,67 @@ import math # For isnan
 
 logger = logging.getLogger(__name__)
 
-def word_to_known (distance_func, word, vocab, threshold=3) :
+def word_to_known (distance_func, original_word_from_ocr, preprocessed_vocab_set, threshold=3):
     """
-    Finds the closest word in vocab to the input word using distance_func,
-    if the distance is below the threshold. Handles numbers and punctuation/whitespace.
+    Finds the closest word in preprocessed_vocab_set to the preprocessed version
+    of original_word_from_ocr using distance_func, if the distance is below the threshold.
+    Handles numbers and punctuation/whitespace.
+
+    Args:
+        distance_func: Function to calculate distance (e.g., Levenshtein).
+        original_word_from_ocr: The raw word string as obtained from OCR.
+        preprocessed_vocab_set: A set of already preprocessed vocabulary strings.
+        threshold: Maximum distance to consider a match.
+
+    Returns:
+        tuple: (matched_word, distance)
+               - matched_word: The word from preprocessed_vocab_set if a match is found within threshold,
+                               OR the original_word_from_ocr if it's a number,
+                               OR the original_word_from_ocr if no suitable vocab match.
+               - distance: The calculated distance for the match, -1 for numbers, float('inf') for no match.
     """
-    # Ignore if word is purely punctuation or whitespace
-    if all(c in string.punctuation or c.isspace() for c in word):
-        return word, float('inf') # Return original, indicate not a match
+    # 1. Handle pure punctuation/whitespace based on the original OCR word
+    if all(c in string.punctuation or c.isspace() for c in original_word_from_ocr):
+        # logger.debug(f"'{original_word_from_ocr}' is all punctuation/space. Returning as is.")
+        return original_word_from_ocr, float('inf')
 
-    # Check if it's a number (handle potential variations)
-    if isnumber(word) :
-        return word, -1 # Return original, indicate it's a number
+    # 2. Check if the original OCR word is a number
+    if isnumber(original_word_from_ocr):
+        # logger.debug(f"'{original_word_from_ocr}' is a number. Returning as is with dist -1.")
+        return original_word_from_ocr, -1
 
-    if not vocab: # Check if vocab is empty
-        logger.warning("word_to_known called with empty vocab, returning original word.")
-        return word, float('inf')
+    # 3. Preprocess the input word from OCR for comparison against preprocessed vocabulary
+    processed_ocr_word = preprocess(original_word_from_ocr)
+    if not processed_ocr_word: # If preprocessing results in an empty string
+        # logger.debug(f"Preprocessing '{original_word_from_ocr}' resulted in empty string. Returning original.")
+        return original_word_from_ocr, float('inf')
 
-    best_word = ""
-    best_distance = float("inf")
+    # 4. Check if vocab is empty
+    if not preprocessed_vocab_set:
+        logger.warning("word_to_known called with empty preprocessed_vocab_set, returning original word.")
+        return original_word_from_ocr, float('inf')
 
-    # Preprocess the input word once for comparison
-    processed_word = preprocess(word)
-    if not processed_word: # Handle cases where preprocessing empties the word
-        return word, float('inf')
+    # 5. Find the best match in the preprocessed vocabulary
+    best_vocab_match = "" # This will be a word from preprocessed_vocab_set
+    min_distance = float("inf")
 
-    # Compare against preprocessed words in vocab (assuming vocab contains already processed words)
-    # If vocab is raw, preprocess w inside the loop: processed_w = preprocess(w)
-    for w in vocab :
-        # Assuming vocab words are already preprocessed. If not, preprocess here:
-        # processed_w = preprocess(w)
-        # d = distance_func(processed_word, processed_w)
-        d = distance_func(processed_word, w) # Assumes vocab is preprocessed
-        if d <= threshold and d < best_distance : # Use < to prefer earlier matches in case of ties
-            best_word = w
-            best_distance = d
+    for vocab_w in preprocessed_vocab_set:
+        # Both processed_ocr_word and vocab_w are preprocessed at this point
+        d = distance_func(processed_ocr_word, vocab_w)
+        if d < min_distance: # Update if this distance is strictly better
+            min_distance = d
+            best_vocab_match = vocab_w
+        # If d == min_distance, we keep the first one encountered (arbitrary tie-break)
 
-    # Return the *original* vocab word if found, otherwise the original input word
-    if best_word:
-        # logger.debug(f"Mapped '{word}' (processed: '{processed_word}') to '{best_word}' with distance {best_distance}")
-        return best_word, best_distance
+    # 6. Decide what to return based on the threshold
+    if min_distance <= threshold:
+        # A good match was found in the vocabulary. Return the matched *vocabulary word*.
+        # logger.debug(f"Mapped OCR word '{original_word_from_ocr}' (processed: '{processed_ocr_word}') to vocab '{best_vocab_match}' with distance {min_distance}")
+        return best_vocab_match, min_distance
     else:
-        # logger.debug(f"No close match found for '{word}' (processed: '{processed_word}') in vocab (threshold {threshold}).")
-        return word, float('inf') # Return original word, indicate no match found
-
+        # No close match found in vocabulary. Return the *original OCR word*.
+        # logger.debug(f"No close vocab match for OCR word '{original_word_from_ocr}' (processed: '{processed_ocr_word}'). Min dist: {min_distance} > threshold: {threshold}. Returning original.")
+        return original_word_from_ocr, min_distance # Return actual min_distance for potential logging/use, even if > threshold
 
 def _no_accent(word) :
     # Simplified accent removal
